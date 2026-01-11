@@ -1,0 +1,110 @@
+# Stockfish iOS Static Library Makefile
+# 用于将 Stockfish 编译为 iOS 静态库
+
+# 目标
+STATICLIB_DEVICE = libstockfish-ios.a
+STATICLIB_SIM = libstockfish-sim.a
+STATICLIB_UNIVERSAL = libstockfish.a
+
+# iOS SDK 路径
+IOS_SDK = $(shell xcrun --sdk iphoneos --show-sdk-path)
+SIM_SDK = $(shell xcrun --sdk iphonesimulator --show-sdk-path)
+
+# 编译器
+CXX_DEVICE = xcrun -sdk iphoneos clang++
+CXX_SIM = xcrun -sdk iphonesimulator clang++
+AR = ar
+
+# 最低 iOS 版本
+IOS_MIN_VERSION = 13.0
+
+# 源文件 (排除 main.cpp)
+SRCS = benchmark.cpp bitboard.cpp evaluate.cpp \
+    misc.cpp movegen.cpp movepick.cpp position.cpp \
+    search.cpp thread.cpp timeman.cpp tt.cpp uci.cpp ucioption.cpp tune.cpp \
+    syzygy/tbprobe.cpp nnue/nnue_accumulator.cpp nnue/nnue_misc.cpp \
+    nnue/network.cpp nnue/features/half_ka_v2_hm.cpp \
+    nnue/features/full_threats.cpp engine.cpp score.cpp memory.cpp
+
+# 对象文件
+OBJS_DEVICE = $(SRCS:.cpp=.device.o)
+OBJS_SIM = $(SRCS:.cpp=.sim.o)
+
+# 通用编译标志
+CXXFLAGS_COMMON = -std=c++17 -O3 -DNDEBUG \
+    -fno-exceptions -fno-rtti \
+    -Wall -Wcast-qual \
+    -DNNUE_EMBEDDING_OFF \
+    -DIS_64BIT \
+    -DUSE_POPCNT \
+    -fvisibility=hidden
+
+# iOS 设备编译标志 (arm64)
+CXXFLAGS_DEVICE = $(CXXFLAGS_COMMON) \
+    -arch arm64 \
+    -isysroot $(IOS_SDK) \
+    -mios-version-min=$(IOS_MIN_VERSION) \
+    -DUSE_NEON=8 \
+    -DUSE_NEON_DOTPROD \
+    -march=armv8.2-a+dotprod \
+    -fembed-bitcode
+
+# iOS 模拟器编译标志 (x86_64 + arm64)
+CXXFLAGS_SIM = $(CXXFLAGS_COMMON) \
+    -arch x86_64 -arch arm64 \
+    -isysroot $(SIM_SDK) \
+    -mios-simulator-version-min=$(IOS_MIN_VERSION)
+
+# 默认目标
+all: device
+
+# 编译 iOS 设备静态库
+device: $(STATICLIB_DEVICE)
+
+$(STATICLIB_DEVICE): $(OBJS_DEVICE)
+	$(AR) rcs $@ $^
+	@echo "✅ Built $(STATICLIB_DEVICE) for iOS device (arm64)"
+
+%.device.o: %.cpp
+	@mkdir -p $(dir $@)
+	$(CXX_DEVICE) $(CXXFLAGS_DEVICE) -c $< -o $@
+
+# 编译 iOS 模拟器静态库
+simulator: $(STATICLIB_SIM)
+
+$(STATICLIB_SIM): $(OBJS_SIM)
+	$(AR) rcs $@ $^
+	@echo "✅ Built $(STATICLIB_SIM) for iOS simulator"
+
+%.sim.o: %.cpp
+	@mkdir -p $(dir $@)
+	$(CXX_SIM) $(CXXFLAGS_SIM) -c $< -o $@
+
+# 创建通用静态库 (设备 + 模拟器)
+universal: device simulator
+	lipo -create $(STATICLIB_DEVICE) $(STATICLIB_SIM) -output $(STATICLIB_UNIVERSAL)
+	@echo "✅ Built universal $(STATICLIB_UNIVERSAL)"
+
+# 清理
+clean:
+	rm -f $(OBJS_DEVICE) $(OBJS_SIM)
+	rm -f $(STATICLIB_DEVICE) $(STATICLIB_SIM) $(STATICLIB_UNIVERSAL)
+	rm -f syzygy/*.o nnue/*.o nnue/features/*.o
+	@echo "🧹 Cleaned all build artifacts"
+
+# 显示帮助
+help:
+	@echo "Stockfish iOS Static Library Build"
+	@echo ""
+	@echo "Targets:"
+	@echo "  device     - Build for iOS device (arm64)"
+	@echo "  simulator  - Build for iOS simulator (x86_64 + arm64)"
+	@echo "  universal  - Build universal library (device + simulator)"
+	@echo "  clean      - Remove all build artifacts"
+	@echo ""
+	@echo "Output:"
+	@echo "  $(STATICLIB_DEVICE)  - iOS device library"
+	@echo "  $(STATICLIB_SIM)     - iOS simulator library"
+	@echo "  $(STATICLIB_UNIVERSAL)  - Universal library"
+
+.PHONY: all device simulator universal clean help
